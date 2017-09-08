@@ -1,14 +1,23 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <error.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/epoll.h>
 
+#include <sys/epoll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+
+
+#define PORT 12345
+#define MAXEVENTS 64
+#define BUFFERSIZE 1024
+
+
+void error_exit(const char *msg) {
+    error(EXIT_FAILURE, errno, msg);
+}
 
 
 int set_nonblock(int fd) {
@@ -24,22 +33,7 @@ int set_nonblock(int fd) {
 }
 
 
-void error_exit(const char *msg) {
-    error(EXIT_FAILURE, errno, msg);
-}
-
-
-#define PORT 12345
-#define MAXEVENTS 64
-#define BUFFERSIZE 1024
-
-
-int main() {
-    // open the master socket
-    int serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (serverSocket == -1)
-        error_exit("error in socket()");
-
+void configure_server_socket(int serverSocket) {
     // bind the socket to the address
     struct sockaddr_in socketAddress;
     socketAddress.sin_family = AF_INET;
@@ -55,49 +49,74 @@ int main() {
     // listen sockets
     if (listen(serverSocket, SOMAXCONN) == -1)
         error_exit("cannot listen");
+}
 
-    // create epoll struct
-    int ePollId = epoll_create1(0);
-    if (ePollId == -1)
+
+void register_in_epoll(int sock, int epollId) {
+    struct epoll_event event;
+    event.data.fd = sock;
+    event.events = EPOLLIN;
+    if (epoll_ctl(epollId, EPOLL_CTL_ADD, sock, &event) == -1)
+        error_exit("cannot register in epoll");
+}
+
+
+void register_new_client(int serverSocket, int epollId) {
+    int clientSocket = accept(serverSocket, NULL, NULL);
+    if (clientSocket == -1)
+        error_exit("cannot accept new client");
+
+    if (set_nonblock(clientSocket))
+        error_exit("cannot unblock");
+
+    register_in_epoll(clientSocket, epollId);
+}
+
+
+void serve_client(int clientSocket) {
+    char buffer[BUFFERSIZE] = {};
+    int recvSize = recv(clientSocket, buffer, BUFFERSIZE, MSG_NOSIGNAL);
+    if (recvSize <= 0 && errno != EAGAIN) {
+        shutdown(clientSocket, SHUT_RDWR);
+        close(clientSocket);
+    } else if (recvSize > 0) {
+        send(clientSocket, buffer, recvSize, MSG_NOSIGNAL);
+    }
+}
+
+
+int main() {
+    // open and configure the master socket
+    int serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (serverSocket == -1)
+        error_exit("error in socket()");
+    configure_server_socket(serverSocket);
+
+    // create epoll id
+    int epollId = epoll_create1(0);
+    if (epollId == -1)
         error_exit("error in epoll_create1()");
 
-    struct epoll_event serverEvent;
-    serverEvent.data.fd = serverSocket;
-    serverEvent.events = EPOLLIN;
-    if (epoll_ctl(ePollId, EPOLL_CTL_ADD, serverSocket, &serverEvent) == -1)
-        error_exit("error in epoll_ctl()");
+    // register server in epoll struct
+    register_in_epoll(serverSocket, epollId);
 
+    // go to infinite cycle
     while (1) {
         struct epoll_event currentEvents[MAXEVENTS];
-        int nChanges = epoll_wait(ePollId, currentEvents, MAXEVENTS, -1);
-        for (int i = 0; i < nChanges; ++i) {
-            if (currentEvents[i].data.fd == serverSocket) {
-                // server socket get request to join
-                int clientSocket = accept(serverSocket, 0, 0);
-                set_nonblock(clientSocket);
-                struct epoll_event clientEvent;
-                clientEvent.data.fd = clientSocket;
-                clientEvent.events = EPOLLIN;
-                epoll_ctl(ePollId, EPOLL_CTL_ADD, clientSocket, &clientEvent);
-                printf("registered: %d\n", clientSocket);
+        int nEvents = epoll_wait(epollId, currentEvents, MAXEVENTS, -1);
+        for (int i = 0; i < nEvents; ++i) {
+            int sock = currentEvents[i].data.fd;
+            if (sock == serverSocket) {
+                // server socket gets request to join
+                register_new_client(serverSocket, epollId);
             } else {
-                // client socket sends data
-                char buffer[BUFFERSIZE] = {};
-                int clientSocket = currentEvents[i].data.fd;
-                int recvSize = recv(clientSocket, buffer, BUFFERSIZE, MSG_NOSIGNAL);
-                if (recvSize <= 0 && errno != EAGAIN) {
-                    shutdown(clientSocket, SHUT_RDWR);
-                    close(clientSocket);
-                    printf("closed connection: %d\n", clientSocket);
-                } else if (recvSize > 0) {
-                    printf("get data from: %d\n", clientSocket);
-                    send(clientSocket, buffer, recvSize, MSG_NOSIGNAL);
-                }
+                // client socket is ready to something
+                serve_client(sock);
             }
         }
     }
 
-    // stop socket operations
+    // stop the server
     if (shutdown(serverSocket, SHUT_RDWR) == -1)
         error_exit("error in shutdown()");
 
