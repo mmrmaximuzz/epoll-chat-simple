@@ -1,10 +1,9 @@
-#include <array>
-#include <iostream>
-
+#include <fcntl.h>
 #include <errno.h>
 #include <error.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/epoll.h>
 
 #include <sys/types.h>
@@ -30,9 +29,9 @@ void error_exit(const char *msg) {
 }
 
 
-const int MAXEVENTS = 64;
-const short PORT = 12345;
-const int BUFFERSIZE = 1024;
+#define PORT 12345
+#define MAXEVENTS 64
+#define BUFFERSIZE 1024
 
 
 int main() {
@@ -68,34 +67,31 @@ int main() {
     if (epoll_ctl(ePollId, EPOLL_CTL_ADD, serverSocket, &serverEvent) == -1)
         error_exit("error in epoll_ctl()");
 
-    while (true) {
+    while (1) {
         struct epoll_event currentEvents[MAXEVENTS];
-        std::cout << "epoll waiting" << std::endl;
         int nChanges = epoll_wait(ePollId, currentEvents, MAXEVENTS, -1);
-        std::cout << "wake up" << std::endl;
         for (int i = 0; i < nChanges; ++i) {
             if (currentEvents[i].data.fd == serverSocket) {
                 // server socket get request to join
-                int clientSocket = accept(clientSocket, 0, 0);
+                int clientSocket = accept(serverSocket, 0, 0);
                 set_nonblock(clientSocket);
                 struct epoll_event clientEvent;
                 clientEvent.data.fd = clientSocket;
                 clientEvent.events = EPOLLIN;
                 epoll_ctl(ePollId, EPOLL_CTL_ADD, clientSocket, &clientEvent);
-                std::cout << "registered: " << clientSocket << std::endl;
+                printf("registered: %d\n", clientSocket);
             } else {
                 // client socket sends data
-                std::array<char, BUFFERSIZE> buffer;
+                char buffer[BUFFERSIZE] = {};
                 int clientSocket = currentEvents[i].data.fd;
-                int recvSize = recv(clientSocket, buffer.data(), BUFFERSIZE, MSG_NOSIGNAL);
+                int recvSize = recv(clientSocket, buffer, BUFFERSIZE, MSG_NOSIGNAL);
                 if (recvSize <= 0 && errno != EAGAIN) {
                     shutdown(clientSocket, SHUT_RDWR);
                     close(clientSocket);
-                    std::cout << "close connection " << clientSocket << std::endl;
+                    printf("closed connection: %d\n", clientSocket);
                 } else if (recvSize > 0) {
-                    send(clientSocket, buffer.data(), recvSize, MSG_NOSIGNAL);
-                    std::cout << "get data from " << clientSocket << std::endl;
-                    std::cout << "message is:   " << buffer.data() << std::endl;
+                    printf("get data from: %d\n", clientSocket);
+                    send(clientSocket, buffer, recvSize, MSG_NOSIGNAL);
                 }
             }
         }
