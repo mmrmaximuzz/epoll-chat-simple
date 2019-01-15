@@ -23,8 +23,9 @@ static std::set<int> activeUsers;
 static std::vector<std::string> messages;
 static std::map<int, std::string> ipAddresses;
 
+
 void error_exit(const char *msg) {
-    error(EXIT_FAILURE, errno, msg);
+    error(EXIT_FAILURE, errno, "%s\n", msg);
 }
 
 
@@ -129,7 +130,7 @@ int main() {
     register_in_epoll(serverSocket, epollId);
 
     // go to infinite cycle
-    while (1) {
+    while (true) {
         struct epoll_event currentEvents[MAXEVENTS];
         int nEvents = epoll_wait(epollId, currentEvents, MAXEVENTS, -1);
         for (int i = 0; i < nEvents; ++i) {
@@ -152,5 +153,5 @@ int main() {
     if (close(serverSocket) == -1)
         error_exit("error in close()");
 
-    return 0;
+    return EXIT_SUCCESS;
 }
