@@ -2,18 +2,17 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <errno.h>
+#include <stdlib.h>
 
 #include <fcntl.h>
-#include <errno.h>
 #include <error.h>
-#include <stdlib.h>
 #include <unistd.h>
-
 #include <arpa/inet.h>
-#include <sys/epoll.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/epoll.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 
 static const int PORT = 12345;
@@ -24,25 +23,28 @@ static std::vector<std::string> messages;
 static std::map<int, std::string> ipAddresses;
 
 
-void error_exit(const char *msg) {
+void error_exit(const char *msg)
+{
     error(EXIT_FAILURE, errno, "%s\n", msg);
 }
 
 
-int set_nonblock(int fd) {
+int set_nonblock(int fd)
+{
+#if defined(O_NONBLOCK)
     int flags;
-    #if defined(O_NONBLOCK)
-        if (-1 == (flags = fcntl(fd, F_GETFL, 0)))
-            flags = 0;
-        return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    #else
-        flags = 1;
-        return ioctl(fd, FIOBIO, &flags);
-    #endif
+    if (-1 == (flags = fcntl(fd, F_GETFL, 0)))
+        flags = 0;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#else
+    int flags = 1;
+    return ioctl(fd, FIOBIO, &flags);
+#endif
 }
 
 
-void configure_server_socket(int serverSocket) {
+void configure_server_socket(int serverSocket)
+{
     // bind the socket to the address
     struct sockaddr_in socketAddress;
     socketAddress.sin_family = AF_INET;
@@ -61,7 +63,8 @@ void configure_server_socket(int serverSocket) {
 }
 
 
-void register_in_epoll(int sock, int epollId) {
+void register_in_epoll(int sock, int epollId)
+{
     struct epoll_event event;
     event.data.fd = sock;
     event.events = EPOLLIN;
@@ -70,7 +73,8 @@ void register_in_epoll(int sock, int epollId) {
 }
 
 
-void register_new_client(int serverSocket, int epollId) {
+void register_new_client(int serverSocket, int epollId)
+{
     socklen_t clientAddrSize = sizeof(struct sockaddr_in);
     struct sockaddr_in socketAddress;
     int clientSocket = accept(serverSocket, (struct sockaddr *) &socketAddress, &clientAddrSize);
@@ -87,7 +91,8 @@ void register_new_client(int serverSocket, int epollId) {
 }
 
 
-void serve_client(int clientSocket) {
+void serve_client(int clientSocket)
+{
     std::array<char, BUFFERSIZE> buffer = {};
     int recvSize = recv(clientSocket, buffer.data(), BUFFERSIZE, MSG_NOSIGNAL);
     if (recvSize <= 0 && errno != EAGAIN) {
@@ -101,7 +106,8 @@ void serve_client(int clientSocket) {
 }
 
 
-void send_messages() {
+void send_messages()
+{
     std::string totalMessage = "";
     for (std::string &message : messages)
         totalMessage += message;
@@ -114,7 +120,8 @@ void send_messages() {
 }
 
 
-int main() {
+int main()
+{
     // open and configure the master socket
     int serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (serverSocket == -1)
